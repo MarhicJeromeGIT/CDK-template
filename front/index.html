@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Click me App</title>
+</head>
+<body>
+    <div id="app">
+        <h1>Welcome to Click me App</h1>
+        <p>This is a simple static page served from S3 and CloudFront.</p>
+        <button id="countButton">Click me</button>
+        <p id="countDisplay">Clicked 0 times</p>
+    </div>
+    <script>
+        document.getElementById('countButton').addEventListener('click', function() {
+            fetch('/api/count', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('countDisplay').textContent = `Clicked ${data.count} times`;
+            })
+            .catch(error => console.error('Error:', error));
+        });
+    </script>
+</body>
+</html>

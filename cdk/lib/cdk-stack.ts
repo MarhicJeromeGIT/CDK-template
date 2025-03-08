@@ -3,6 +3,10 @@ import { Construct } from 'constructs';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecspatterns from 'aws-cdk-lib/aws-ecs-patterns';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import { S3StaticWebsiteOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as iam from 'aws-cdk-lib/aws-iam';
 
 export class CdkStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -38,6 +42,47 @@ export class CdkStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'LoadBalancerDNS', {
       value: fargateService.loadBalancer.loadBalancerDnsName,
       description: 'The DNS name of the load balancer',
+    });
+
+    // Create an S3 bucket for the Vue.js app
+    const siteBucket = new s3.Bucket(this, 'CounterSiteBucket', {
+      websiteIndexDocument: 'index.html',
+      publicReadAccess: true, // Allow public access to the bucket
+      blockPublicAccess: {
+        blockPublicAcls: false,
+        blockPublicPolicy: false,
+        ignorePublicAcls: false,
+        restrictPublicBuckets: false,
+      },
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // Automatically delete bucket when stack is deleted
+      autoDeleteObjects: true, // Automatically delete objects in the bucket when stack is deleted
+    });
+
+    // Grant public read access to the bucket
+    siteBucket.grantPublicAccess('*', 's3:GetObject');
+   
+    // TODO
+    // siteBucket.grantRead(new iam.AnyPrincipal());
+
+    // Create a CloudFront distribution for the S3 bucket
+    const distribution = new cloudfront.Distribution(this, 'SiteDistribution', {
+      defaultBehavior: {
+        origin: new S3StaticWebsiteOrigin(siteBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      defaultRootObject: 'index.html',
+    });
+
+    // Output the CloudFront distribution domain name
+    new cdk.CfnOutput(this, 'CloudFrontURL', {
+      value: distribution.distributionDomainName,
+      description: 'The URL of the CloudFront distribution',
+    });
+
+    // Output the CloudFront distribution ID
+    new cdk.CfnOutput(this, 'CloudFrontDistributionId', {
+      value: distribution.distributionId,
+      description: 'The ID of the CloudFront distribution',
     });
   }
 }
