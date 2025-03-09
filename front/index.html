@@ -10,7 +10,7 @@
         <h1>Welcome to Click me App</h1>
         <p>This is a simple static page served from S3 and CloudFront.</p>
         <button id="countButton">Click me</button>
-        <p id="countDisplay">Clicked 0 times</p>
+        <p id="countDisplay"></p>
     </div>
     <script>
         document.getElementById('countButton').addEventListener('click', function() {
@@ -19,7 +19,13 @@
             })
             .then(response => response.json())
             .then(data => {
-                document.getElementById('countDisplay').textContent = `Clicked ${data.count} times`;
+                const countDisplay = document.getElementById('countDisplay');
+                if (countDisplay.textContent === "") {
+                    countDisplay.textContent = `Clicked ${data.count} times`;
+                } else {
+                    const currentCount = parseInt(countDisplay.textContent.match(/\d+/)[0]);
+                    countDisplay.textContent = `Clicked ${currentCount + 1} times`;
+                }
             })
             .catch(error => console.error('Error:', error));
         });

@@ -5,8 +5,11 @@ import * as ecspatterns from 'aws-cdk-lib/aws-ecs-patterns';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
-import { S3StaticWebsiteOrigin, LoadBalancerV2Origin } from 'aws-cdk-lib/aws-cloudfront-origins';
+import { S3StaticWebsiteOrigin, HttpOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
 
 export class CdkStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -17,27 +20,47 @@ export class CdkStack extends cdk.Stack {
       vpcName: 'jenkins-vpc'
     });
 
+    // Lookup existing Route 53 hosted zone for wovn-sandbox.com
+    const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
+      domainName: 'wovn-sandbox.com',
+    });
+
+    // Request an ACM certificate for api.wovn-sandbox.com
+    const certificate = new certificatemanager.Certificate(this, 'ALBCertificate', {
+      domainName: 'api.wovn-sandbox.com',
+      validation: certificatemanager.CertificateValidation.fromDns(hostedZone),
+    });
+
     // Create an ECS cluster
     const cluster = new ecs.Cluster(this, 'CounterCluster', {
       vpc: vpc
     });
 
-    // Define the Fargate service
+    // Define the Fargate service with HTTPS on ALB
     const fargateService = new ecspatterns.ApplicationLoadBalancedFargateService(this, 'CounterFargateService', {
       cluster: cluster,
       memoryLimitMiB: 512,
       desiredCount: 1,
       taskImageOptions: {
-        image: ecs.ContainerImage.fromAsset('../back'), // Path to your Dockerfile
-        containerPort: 8080, // Ensure traffic is directed correctly
+        image: ecs.ContainerImage.fromAsset('../back'),
+        containerPort: 8080,
       },
       publicLoadBalancer: true,
+      certificate: certificate, // Attach ACM certificate
+      listenerPort: 443, // Enable HTTPS on ALB
       healthCheckGracePeriod: cdk.Duration.seconds(60),
       minHealthyPercent: 100,
       maxHealthyPercent: 200
     });
 
-    // Create an S3 bucket for the Vue.js app
+    // Create a Route 53 A record for api.wovn-sandbox.com pointing to ALB
+    new route53.ARecord(this, 'APIDNSRecord', {
+      zone: hostedZone,
+      recordName: 'api', // Creates api.wovn-sandbox.com
+      target: route53.RecordTarget.fromAlias(new route53targets.LoadBalancerTarget(fargateService.loadBalancer)),
+    });
+
+    // Create an S3 bucket for the Vue.js frontend
     const siteBucket = new s3.Bucket(this, 'CounterSiteBucket', {
       websiteIndexDocument: 'index.html',
       publicReadAccess: true,
@@ -54,7 +77,7 @@ export class CdkStack extends cdk.Stack {
     // Grant public read access to the bucket
     siteBucket.grantPublicAccess('*', 's3:GetObject');
 
-    // Create a CloudFront distribution for the S3 bucket
+    // Create CloudFront distribution for the S3 bucket
     const distribution = new cloudfront.Distribution(this, 'SiteDistribution', {
       defaultBehavior: {
         origin: new S3StaticWebsiteOrigin(siteBucket),
@@ -63,13 +86,9 @@ export class CdkStack extends cdk.Stack {
       defaultRootObject: 'index.html',
     });
 
-    // Create an ALB Origin
-    const albOrigin = new LoadBalancerV2Origin(fargateService.loadBalancer, {
-      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
-      // protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-      customHeaders: {
-        'X-Forwarded-For': 'CloudFront', // Optional for debugging
-      }
+    // Create a CloudFront Origin using api.wovn-sandbox.com instead of ALB's AWS hostname
+    const apiOrigin = new HttpOrigin('api.wovn-sandbox.com', {  // 🔥 Corrected usage
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY, // Use HTTPS
     });
 
     // Create a CloudFront Origin Request Policy for APIs
@@ -79,14 +98,15 @@ export class CdkStack extends cdk.Stack {
       cookieBehavior: cloudfront.OriginRequestCookieBehavior.all(),
     });
 
-    // Add a new behavior for /api to route to the ALB
-    distribution.addBehavior('/api/*', albOrigin, {
+    // Add behavior for /api/* to route to the ALB via api.wovn-sandbox.com
+    distribution.addBehavior('/api/*', apiOrigin, {
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       originRequestPolicy: apiOriginRequestPolicy,
-      allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL, // ✅ Allows GET, POST, PUT, DELETE, etc.
-      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED, // ✅ Prevents caching issues
-    });    
+      allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+    });
 
+    // Output CloudFront and ALB DNS for reference
     new cdk.CfnOutput(this, 'CloudFrontURL', {
       value: distribution.distributionDomainName,
       description: 'The URL of the CloudFront distribution',
