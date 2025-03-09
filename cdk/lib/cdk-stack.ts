@@ -25,11 +25,20 @@ export class CdkStack extends cdk.Stack {
       domainName: 'wovn-sandbox.com',
     });
 
-    // Request an ACM certificate for api.wovn-sandbox.com
-    const certificate = new certificatemanager.Certificate(this, 'ALBCertificate', {
+    // ✅ Request an ACM certificate for api.wovn-sandbox.com (API)
+    const apiCertificate = new certificatemanager.Certificate(this, 'ALBCertificate', {
       domainName: 'api.wovn-sandbox.com',
       validation: certificatemanager.CertificateValidation.fromDns(hostedZone),
     });
+
+    // ✅ Request an ACM certificate for clickme.wovn-sandbox.com (Frontend)
+    const frontendCertificate = new certificatemanager.DnsValidatedCertificate(this, 'FrontendCertificate', {
+      domainName: 'clickme.wovn-sandbox.com',
+      validation: certificatemanager.CertificateValidation.fromDns(hostedZone),
+      hostedZone,
+      region: 'us-east-1', // 🔥 Must be in us-east-1 for CloudFront (?????????? WTF)
+    });
+    
 
     // Create an ECS cluster
     const cluster = new ecs.Cluster(this, 'CounterCluster', {
@@ -46,7 +55,7 @@ export class CdkStack extends cdk.Stack {
         containerPort: 8080,
       },
       publicLoadBalancer: true,
-      certificate: certificate, // Attach ACM certificate
+      certificate: apiCertificate, // Attach ACM certificate for API
       listenerPort: 443, // Enable HTTPS on ALB
       healthCheckGracePeriod: cdk.Duration.seconds(60),
       minHealthyPercent: 100,
@@ -60,7 +69,7 @@ export class CdkStack extends cdk.Stack {
       target: route53.RecordTarget.fromAlias(new route53targets.LoadBalancerTarget(fargateService.loadBalancer)),
     });
 
-    // Create an S3 bucket for the Vue.js frontend
+    // ✅ Create an S3 bucket for the Vue.js frontend
     const siteBucket = new s3.Bucket(this, 'CounterSiteBucket', {
       websiteIndexDocument: 'index.html',
       publicReadAccess: true,
@@ -77,28 +86,37 @@ export class CdkStack extends cdk.Stack {
     // Grant public read access to the bucket
     siteBucket.grantPublicAccess('*', 's3:GetObject');
 
-    // Create CloudFront distribution for the S3 bucket
+    // ✅ Create CloudFront distribution for the S3 bucket with custom domain
     const distribution = new cloudfront.Distribution(this, 'SiteDistribution', {
       defaultBehavior: {
         origin: new S3StaticWebsiteOrigin(siteBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
       defaultRootObject: 'index.html',
+      domainNames: ['clickme.wovn-sandbox.com'], // 🔥 Custom frontend domain
+      certificate: frontendCertificate, // Attach SSL certificate for frontend
     });
 
-    // Create a CloudFront Origin using api.wovn-sandbox.com instead of ALB's AWS hostname
-    const apiOrigin = new HttpOrigin('api.wovn-sandbox.com', {  // 🔥 Corrected usage
+    // ✅ Create a Route 53 record to map clickme.wovn-sandbox.com → CloudFront
+    new route53.ARecord(this, 'FrontendDNSRecord', {
+      zone: hostedZone,
+      recordName: 'clickme', // Creates clickme.wovn-sandbox.com
+      target: route53.RecordTarget.fromAlias(new route53targets.CloudFrontTarget(distribution)),
+    });
+
+    // ✅ Create a CloudFront Origin using api.wovn-sandbox.com instead of ALB's AWS hostname
+    const apiOrigin = new HttpOrigin('api.wovn-sandbox.com', {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY, // Use HTTPS
     });
 
-    // Create a CloudFront Origin Request Policy for APIs
+    // ✅ Create a CloudFront Origin Request Policy for APIs
     const apiOriginRequestPolicy = new cloudfront.OriginRequestPolicy(this, 'ApiOriginRequestPolicy', {
       queryStringBehavior: cloudfront.OriginRequestQueryStringBehavior.all(),
       headerBehavior: cloudfront.OriginRequestHeaderBehavior.all(),
       cookieBehavior: cloudfront.OriginRequestCookieBehavior.all(),
     });
 
-    // Add behavior for /api/* to route to the ALB via api.wovn-sandbox.com
+    // ✅ Add behavior for /api/* to route to the ALB via api.wovn-sandbox.com
     distribution.addBehavior('/api/*', apiOrigin, {
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       originRequestPolicy: apiOriginRequestPolicy,
@@ -106,20 +124,20 @@ export class CdkStack extends cdk.Stack {
       cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
     });
 
-    // Output CloudFront and ALB DNS for reference
-    new cdk.CfnOutput(this, 'CloudFrontURL', {
-      value: distribution.distributionDomainName,
-      description: 'The URL of the CloudFront distribution',
-    });
-
-    new cdk.CfnOutput(this, 'LoadBalancerDNS', {
-      value: fargateService.loadBalancer.loadBalancerDnsName,
-      description: 'The DNS name of the load balancer',
+    // ✅ Output CloudFront and ALB DNS for reference
+    new cdk.CfnOutput(this, 'FrontendURL', {
+      value: 'https://clickme.wovn-sandbox.com',
+      description: 'The URL of the frontend app',
     });
 
     new cdk.CfnOutput(this, 'CloudFrontDistributionId', {
       value: distribution.distributionId,
       description: 'The ID of the CloudFront distribution',
+    });
+
+    new cdk.CfnOutput(this, 'LoadBalancerDNS', {
+      value: fargateService.loadBalancer.loadBalancerDnsName,
+      description: 'The DNS name of the API load balancer',
     });
   }
 }
