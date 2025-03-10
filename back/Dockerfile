@@ -23,7 +23,10 @@ WORKDIR /app
 # Copy the built application from the builder stage
 COPY --from=builder /app/server .
 
-# Expose the port the application runs on
+# Set environment variables
+ENV DB_USER=your_default_user
+ENV DB_NAME=your_default_dbname
+ENV DB_HOST=your_default_host
 EXPOSE 8080
 
 # Command to run the application
