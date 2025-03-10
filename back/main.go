@@ -22,8 +22,13 @@ func initDB() {
 	user := os.Getenv("DB_USER")
 	dbname := os.Getenv("DB_NAME")
 	host := os.Getenv("DB_HOST")
+	password := os.Getenv("DB_PASSWORD")
 
-	connStr := fmt.Sprintf("user=%s dbname=%s host=%s sslmode=disable", user, dbname, host)
+	connStr := fmt.Sprintf(
+		"user=%s password=%s dbname=%s host=%s sslmode=require",
+		user, password, dbname, host,
+	)
+	
 	fmt.Print("Connecting to database with connection string: ", connStr)
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {

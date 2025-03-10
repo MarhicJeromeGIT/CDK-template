@@ -27,6 +27,8 @@ COPY --from=builder /app/server .
 ENV DB_USER=your_default_user
 ENV DB_NAME=your_default_dbname
 ENV DB_HOST=your_default_host
+ENV DB_PASSWORD=your_default_password
+
 EXPOSE 8080
 
 # Command to run the application

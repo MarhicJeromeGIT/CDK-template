@@ -7,6 +7,8 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import { S3StaticWebsiteOrigin, HttpOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as rds from 'aws-cdk-lib/aws-rds';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
@@ -40,7 +42,41 @@ export class CdkStack extends cdk.Stack {
     });
     
 
-    // Create an ECS cluster
+    // Create a PostgreSQL RDS instance
+    const dbSecurityGroup = new ec2.SecurityGroup(this, 'DBSecurityGroup', {
+      vpc,
+      allowAllOutbound: true,
+    });
+
+    dbSecurityGroup.addIngressRule(ec2.Peer.ipv4(vpc.vpcCidrBlock), ec2.Port.tcp(5432), 'Allow PostgreSQL access from VPC');
+
+    const dbInstance = new rds.DatabaseInstance(this, 'PostgresInstance', {
+      securityGroups: [dbSecurityGroup],
+      engine: rds.DatabaseInstanceEngine.postgres({
+        version: rds.PostgresEngineVersion.VER_17,
+      }),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO),
+      vpc,
+      vpcSubnets: {
+        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      },
+      multiAz: false,
+      allocatedStorage: 20,
+      maxAllocatedStorage: 20,
+      storageType: rds.StorageType.GP2,
+      credentials: rds.Credentials.fromGeneratedSecret('postgres'), // Creates a secret in Secrets Manager
+      databaseName: 'mydatabase',
+      publiclyAccessible: false,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const ecsSecurityGroup = new ec2.SecurityGroup(this, 'ECSSecurityGroup', {
+      vpc,
+      allowAllOutbound: true,
+    });
+
+    ecsSecurityGroup.connections.allowTo(dbSecurityGroup, ec2.Port.tcp(5432), 'Allow ECS to connect to RDS');
+
     const cluster = new ecs.Cluster(this, 'CounterCluster', {
       vpc: vpc
     });
@@ -53,6 +89,14 @@ export class CdkStack extends cdk.Stack {
       taskImageOptions: {
         image: ecs.ContainerImage.fromAsset('../back'),
         containerPort: 8080,
+        environment: {
+          DB_USER: 'postgres',
+          DB_NAME: 'mydatabase',
+          DB_HOST: dbInstance.dbInstanceEndpointAddress,
+        },
+        secrets: {
+          DB_PASSWORD: ecs.Secret.fromSecretsManager(dbInstance.secret!, 'password'),
+        },      
       },
       publicLoadBalancer: true,
       certificate: apiCertificate, // Attach ACM certificate for API
@@ -138,6 +182,12 @@ export class CdkStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'LoadBalancerDNS', {
       value: fargateService.loadBalancer.loadBalancerDnsName,
       description: 'The DNS name of the API load balancer',
+    });
+
+    // display the psql instance endpoint
+    new cdk.CfnOutput(this, 'DBEndpoint', {
+      value: dbInstance.dbInstanceEndpointAddress,
+      description: 'The endpoint of the PostgreSQL RDS instance',
     });
   }
 }

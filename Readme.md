@@ -23,3 +23,15 @@ Hosted at [clickme.wovn-sandbox.com](https://clickme.wovn-sandbox.com)
     └──> [ACM Certificate (api.wovn-sandbox.com)] → Used by ALB
 ```
 
+
+
+Troubleshooting
+
+```
+CdkStack: fail: docker login (...) exited with error code 1: Error saving credentials: error storing credentials - err: exit status 1, out: `Docker credential command not supported without credential helper: store.`
+```
+
+cat ~/.docker/config.json
+{
+  "auths": {}
+}
